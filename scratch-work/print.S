@@ -20,7 +20,7 @@ print_msg:
   li a3, 0644
   li a7, 56 # openat
   ecall
-  li a7, 57 # close # need to recompile and get bytes from scratch from xelf
+  li a7, 57 # close # need to recompile and get bytes from scratch from xelfviewer
   ecall
   addi sp, sp, 16
   li a0, 69

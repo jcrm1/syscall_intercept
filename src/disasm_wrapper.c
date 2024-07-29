@@ -63,7 +63,7 @@ struct intercept_disasm_context {
  * this regard i.e. providing capstone with nop implementation of vsnprintf.
  */
 static int
-nop_vsnprintf()
+nop_vsnprintf(void)
 {
 	return 0;
 }
@@ -110,7 +110,7 @@ intercept_disasm_init(const unsigned char *begin, const unsigned char *end)
 		.free = free,
 		.calloc = calloc,
 		.realloc = realloc,
-		.vsnprintf = nop_vsnprintf};
+		.vsnprintf = (cs_vsnprintf_t)nop_vsnprintf};
 	if (cs_option(context->handle, CS_OPT_MEM, (size_t)&x) != 0)
 		xabort("cs_option - CS_OPT_MEM");
 

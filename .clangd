@@ -1,0 +1,12 @@
+CompileFlags:
+  Add: 
+    - "-std=c99"
+    - "-I/usr/include"
+    - "-I/usr/include/capstone"
+    - "-lcapstone"
+    - "-ldl"
+    - "-Wno-strict-prototypes"
+    - "-Wno-unused-parameter"
+    - "-Wno-empty-translation-unit"
+    - "-Wno-error"
+    - "-Wno-gnu-pointer-arith"

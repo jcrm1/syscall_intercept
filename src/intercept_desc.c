@@ -87,8 +87,8 @@ add_table_info(struct section_list *list, const Elf64_Shdr *header)
  * about the corresponding code text.
  */
 static void
-add_text_info(struct intercept_desc *desc, const Elf64_Shdr *header,
-		Elf64_Half index)
+add_text_info(struct intercept_desc *desc, const Elf32_Shdr *header,
+		Elf32_Half index)
 {
 	desc->text_offset = header->sh_offset;
 	desc->text_start = desc->base_addr + header->sh_addr;
@@ -104,17 +104,17 @@ add_text_info(struct intercept_desc *desc, const Elf64_Shdr *header,
 static void
 find_sections(struct intercept_desc *desc, int fd)
 {
-	Elf64_Ehdr elf_header;
+	Elf32_Ehdr elf_header;
 
 	desc->symbol_tables.count = 0;
 	desc->rela_tables.count = 0;
 
 	xread(fd, &elf_header, sizeof(elf_header));
 
-	Elf64_Shdr sec_headers[elf_header.e_shnum];
+	Elf32_Shdr sec_headers[elf_header.e_shnum];
 
 	xlseek(fd, elf_header.e_shoff, SEEK_SET);
-	xread(fd, sec_headers, elf_header.e_shnum * sizeof(Elf64_Shdr));
+	xread(fd, sec_headers, elf_header.e_shnum * sizeof(Elf32_Shdr));
 
 	char sec_string_table[sec_headers[elf_header.e_shstrndx].sh_size];
 
@@ -124,8 +124,8 @@ find_sections(struct intercept_desc *desc, int fd)
 
 	bool text_section_found = false;
 
-	for (Elf64_Half i = 0; i < elf_header.e_shnum; ++i) {
-		const Elf64_Shdr *section = &sec_headers[i];
+	for (Elf32_Half i = 0; i < elf_header.e_shnum; ++i) {
+		const Elf32_Shdr *section = &sec_headers[i];
 		char *name = sec_string_table + section->sh_name;
 
 		debug_dump("looking at section: \"%s\" type: %ld\n",
@@ -177,7 +177,7 @@ calculate_table_count(const struct intercept_desc *desc)
 	/* how large is the text segment? */
 	size_t bytes = (size_t)(desc->text_end - desc->text_start + 1);
 
-	/*
+	/* 
 	 * Guess: one entry per 64 bytes of machine code.
 	 * This would result in zero entries for 63 bytes of text segment,
 	 * so it is safer to have an absolute minimum. The 0x10000 value
@@ -408,30 +408,15 @@ add_new_patch(struct intercept_desc *desc)
 /*
  * is_overwritable_nop
  * Check if an instruction just disassembled is a NOP that can be
- * used for placing an extra jump instruction into it.
+ * used for placing jump instructions into it. Must be at least 4
+ * bytes for a jalr instruction.
  * See the nop_trampoline usage in the patcher.c source file.
- * This instruction is usable only if it occupies at least seven bytes.
- * Two are needed for a short jump, and another 5 bytes for a trampoline
- * jump with 32 bit displacement.
- *
- * As in (where XXXX represents a 32 bit displacement):
- *                                Before      After
- *                                _______     _______
- * address of NOP instruction ->  | NOP |     | JMP | <- jumps to next
- *                                |     |     | +8  |     instruction
- *                                |     |     | JMP | <- 5 bytes of payload
- *                                |     |     |  X  |
- *                                |     |     |  X  |
- *                                |     |     |  X  |
- *                                |     |     |  X  |
- *                                |     |     |     |
- * address of next instruction -> -------     -------
- *
  */
+
 bool
 is_overwritable_nop(const struct intercept_disasm_result *ins)
 {
-	return ins->is_nop && ins->length >= 2 + 5;
+	return (ins->is_nop && ins->length >= 4); 
 }
 
 /*
@@ -457,19 +442,17 @@ crawl_text(struct intercept_desc *desc)
 	unsigned char *code = desc->text_start;
 
 	/*
-	 * Remember the previous three instructions, while
+	 * Remember the previous instruction, while
 	 * disassembling the code instruction by instruction in the
 	 * while loop below.
 	 */
-	struct intercept_disasm_result prevs[3] = {{0, }};
+	struct intercept_disasm_result prev = {0};
 
 	/*
-	 * How many previous instructions were decoded before this one,
-	 * and stored in the prevs array. Usually three, except for the
-	 * beginning of the text section -- the first instruction naturally
-	 * has no previous instruction.
+	 * Was an instruction decoded before this one? -- the first
+	 * instruction naturally has no previous instruction.
 	 */
-	unsigned has_prevs = 0;
+	bool has_prev = false;
 	struct intercept_disasm_context *context =
 	    intercept_disasm_init(desc->text_start, desc->text_end);
 
@@ -478,66 +461,30 @@ crawl_text(struct intercept_desc *desc)
 
 		result = intercept_disasm_next_instruction(context, code);
 
-		if (result.length == 0) {
-			++code;
+		if (result.length == 0) {      // leftover from x86_64.
+			code += COMPRESSED_INS_SIZE; // in what case does this condition occur?
 			continue;
 		}
-
-		if (result.has_ip_relative_opr)
-			mark_jump(desc, result.rip_ref_addr);
 
 		if (is_overwritable_nop(&result))
 			mark_nop(desc, code, result.length);
 
-		/*
-		 * Generate a new patch description, if:
-		 * - Information is available about a syscalls place
-		 * - one following instruction
-		 * - two preceding instructions
-		 *
-		 * So this is done only if instruction in the previous
-		 * loop iteration was a syscall. Which means the currently
-		 * decoded instruction is the 'following' instruction -- as
-		 * in following the syscall.
-		 * The two instructions from two iterations ago, and three
-		 * iterations ago are going to be the two 'preceding'
-		 * instructions stored in the patch description. Other fields
-		 * of the struct patch_desc are not filled at this point yet.
-		 *
-		 * prevs[0]      ->     patch->preceding_ins_2
-		 * prevs[1]      ->     patch->preceding_ins
-		 * prevs[2]      ->     [syscall]
-		 * current ins.  ->     patch->following_ins
-		 *
-		 *
-		 * XXX -- this ignores the cases where the text section
-		 * starts, or ends with a syscall instruction, or indeed, if
-		 * the second instruction in the text section is a syscall.
-		 * These implausible edge cases don't seem to be very important
-		 * right now.
-		 */
-		if (has_prevs >= 1 && prevs[2].is_syscall) {
+		if (result.is_syscall) {
 			struct patch_desc *patch = add_new_patch(desc);
 
+			patch->syscall_addr = code;
 			patch->containing_lib_path = desc->path;
-			patch->preceding_ins_2 = prevs[0];
-			patch->preceding_ins = prevs[1];
-			patch->following_ins = result;
-			patch->syscall_addr = code - SYSCALL_INS_SIZE;
+			patch->preceding_ins = prev;
 
 			ptrdiff_t syscall_offset = patch->syscall_addr -
 			    (desc->text_start - desc->text_offset);
-
 			assert(syscall_offset >= 0);
-
 			patch->syscall_offset = (unsigned long)syscall_offset;
 		}
 
-		prevs[0] = prevs[1];
-		prevs[1] = prevs[2];
-		prevs[2] = result;
-		if (has_prevs < 2)
-			++has_prevs;
+		prev = result;
+		/* always true after first iteration */
+		has_prev = true;
 
 		code += result.length;
 	}
@@ -701,16 +648,6 @@ find_syscalls(struct intercept_desc *desc)
 	    desc->path,
 	    (uintptr_t)desc->text_start,
 	    (uintptr_t)desc->text_end);
-	allocate_jump_table(desc);
-	allocate_nop_table(desc);
-
-	for (Elf64_Half i = 0; i < desc->symbol_tables.count; ++i)
-		find_jumps_in_section_syms(desc,
-		    desc->symbol_tables.headers + i, fd);
-
-	for (Elf64_Half i = 0; i < desc->rela_tables.count; ++i)
-		find_jumps_in_section_rela(desc,
-		    desc->rela_tables.headers + i, fd);
 
 	syscall_no_intercept(SYS_close, fd);
 

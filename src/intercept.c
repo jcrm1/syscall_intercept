@@ -113,23 +113,28 @@ void __attribute__((noreturn)) xlongjmp(long rip, long rsp, long rax);
  */
 struct context {
 	struct patch_desc *patch_desc;
-	long rip;
-	long r15;
-	long r14;
-	long r13;
-	long r12;
-	long r10;
-	long r9;
-	long r8;
-	long rsp;
-	long rbp;
-	long rdi;
-	long rsi;
-	long rbx;
-	long rdx;
-	long rax;
-	char padd[0x200 - 0x168]; /* see: stack layout in intercept_wrapper.s */
-	long SIMD[16][8]; /* 8 SSE, 8 AVX, or 16 AVX512 registers */
+	uint32_t a7;
+	uint32_t a6;
+	uint32_t a5;
+	uint32_t a4;
+	uint32_t a3;
+	uint32_t a2;
+	uint32_t a1;
+	uint32_t a0;
+	uint32_t s11;
+	uint32_t s10;
+	uint32_t s9;
+	uint32_t s8;
+	uint32_t s7;
+	uint32_t s6;
+	uint32_t s5;
+	uint32_t s4;
+	uint32_t s3;
+	uint32_t s2;
+	uint32_t s1;
+	uint32_t s0;
+	// char padd[0x200 - 0x168]; /* see: stack layout in intercept_wrapper.s */
+	// long SIMD[16][8]; /* 8 SSE, 8 AVX, or 16 AVX512 registers */
 };
 
 struct wrapper_ret {
@@ -262,31 +267,31 @@ get_name_from_proc_maps(uintptr_t addr)
  * get_any_used_vaddr - find a virtual address that is expected to
  * be a used for the object file mapped into memory.
  *
- * An Elf64_Phdr struct contains information about a segment in an on object
+ * An Elf32_Phdr struct contains information about a segment in an on object
  * file. This routine looks for a segment with type LOAD, that has a non-zero
  * size in memory. The p_vaddr field contains the virtual address where this
  * segment should be loaded to. This of course is relative to the base address.
  *
  * typedef struct
  * {
- *   Elf64_Word p_type;			Segment type
- *   Elf64_Word p_flags;		Segment flags
- *   Elf64_Off p_offset;		Segment file offset
- *   Elf64_Addr p_vaddr;		Segment virtual address
- *   Elf64_Addr p_paddr;		Segment physical address
- *   Elf64_Xword p_filesz;		Segment size in file
- *   Elf64_Xword p_memsz;		Segment size in memory
- *   Elf64_Xword p_align;		Segment alignment
- * } Elf64_Phdr;
+ *   Elf32_Word p_type;			Segment type
+ *   Elf32_Word p_flags;		Segment flags
+ *   Elf32_Off p_offset;		Segment file offset
+ *   Elf32_Addr p_vaddr;		Segment virtual address
+ *   Elf32_Addr p_paddr;		Segment physical address
+ *   Elf32_Xword p_filesz;		Segment size in file
+ *   Elf32_Xword p_memsz;		Segment size in memory
+ *   Elf32_Xword p_align;		Segment alignment
+ * } Elf32_Phdr;
  *
  *
  */
 static uintptr_t
 get_any_used_vaddr(const struct dl_phdr_info *info)
 {
-	const Elf64_Phdr *pheaders = info->dlpi_phdr;
+	const Elf32_Phdr *pheaders = info->dlpi_phdr;
 
-	for (Elf64_Word i = 0; i < info->dlpi_phnum; ++i) {
+	for (Elf32_Word i = 0; i < info->dlpi_phnum; ++i) {
 		if (pheaders[i].p_type == PT_LOAD && pheaders[i].p_memsz != 0)
 			return info->dlpi_addr + pheaders[i].p_vaddr;
 	}
@@ -593,13 +598,12 @@ xabort_on_syserror(long syscall_result, const char *msg)
 static void
 get_syscall_in_context(struct context *context, struct syscall_desc *sys)
 {
-	sys->nr = (int)context->rax; /* ignore higher 32 bits */
-	sys->args[0] = context->rdi;
-	sys->args[1] = context->rsi;
-	sys->args[2] = context->rdx;
-	sys->args[3] = context->r10;
-	sys->args[4] = context->r8;
-	sys->args[5] = context->r9;
+	sys->nr = context->a7;
+	sys->args[0] = context->a0;
+	sys->args[1] = context->a1;
+	sys->args[2] = context->a2;
+	sys->args[4] = context->a3;
+	sys->args[5] = context->a4;
 }
 
 /*

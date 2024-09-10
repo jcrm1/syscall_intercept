@@ -95,19 +95,10 @@ struct patch_desc {
 	/* the address to jump back to */
 	unsigned char *return_address;
 
-	/*
-	 * Describe up to three instructions surrounding the original
-	 * syscall instructions. Sometimes just overwritting the two
-	 * direct neighbors of the syscall is not enough, ( e.g. if
-	 * both the directly preceding, and the directly following are
-	 * single byte instruction, that only gives 4 bytes of space ).
-	 */
-	struct intercept_disasm_result preceding_ins_2;
+	/* the instruction preceding the syscall instruction */
 	struct intercept_disasm_result preceding_ins;
-	struct intercept_disasm_result following_ins;
-	bool uses_prev_ins_2;
+
 	bool uses_prev_ins;
-	bool uses_next_ins;
 
 	bool uses_nop_trampoline;
 
@@ -202,14 +193,8 @@ void mprotect_asm_wrappers(void);
  */
 void activate_patches(struct intercept_desc *desc);
 
-#define SYSCALL_INS_SIZE 2
-#define JUMP_INS_SIZE 5
-#define CALL_OPCODE 0xe8
-#define JMP_OPCODE 0xe9
-#define SHORT_JMP_OPCODE 0xeb
-#define PUSH_IMM_OPCODE 0x68
-#define NOP_OPCODE 0x90
-#define INT3_OPCODE 0xCC
+#define SYSCALL_INS_SIZE 4
+#define UNCOMPRESSED_INS_SIZE 4
 
 bool is_overwritable_nop(const struct intercept_disasm_result *ins);
 
@@ -218,6 +203,7 @@ void create_jump(unsigned char opcode, unsigned char *from, void *to);
 extern const char *cmdline;
 
 #define PAGE_SIZE ((size_t)0x1000)
+#define COMPRESSED_INS_SIZE ((size_t)2)
 
 static inline unsigned char *
 round_down_address(unsigned char *address)

@@ -94,57 +94,63 @@ static void create_wrapper(struct patch_desc *patch, unsigned char **dst);
  * This uses up 6 bytes for the jump instruction, and another 8 bytes
  * for the pointer right after the instruction.
  */
-static unsigned char *
-create_absolute_jump(unsigned char *from, void *to)
-{
-	*from++ = 0xff; /* opcode of RIP based indirect jump */
-	*from++ = 0x25; /* opcode of RIP based indirect jump */
-	*from++ = 0; /* 32 bit zero offset */
-	*from++ = 0; /* this means zero relative to the value */
-	*from++ = 0; /* of RIP, which during the execution of the jump */
-	*from++ = 0; /* points to right after the jump instruction */
+// static unsigned char *
+// create_absolute_jump(unsigned char *from, void *to)
+// {
+// 	*from++ = 0xff; /* opcode of RIP based indirect jump */
+// 	*from++ = 0x25; /* opcode of RIP based indirect jump */
+// 	*from++ = 0; /* 32 bit zero offset */
+// 	*from++ = 0; /* this means zero relative to the value */
+// 	*from++ = 0; /* of RIP, which during the execution of the jump */
+// 	*from++ = 0; /* points to right after the jump instruction */
 
-	unsigned char *d = (unsigned char *)&to;
+// 	unsigned char *d = (unsigned char *)&to;
 
-	*from++ = d[0]; /* so, this is where (RIP + 0) points to, */
-	*from++ = d[1]; /* jump reads the destination address */
-	*from++ = d[2]; /* from here */
-	*from++ = d[3];
-	*from++ = d[4];
-	*from++ = d[5];
-	*from++ = d[6];
-	*from++ = d[7];
+// 	*from++ = d[0]; /* so, this is where (RIP + 0) points to, */
+// 	*from++ = d[1]; /* jump reads the destination address */
+// 	*from++ = d[2]; /* from here */
+// 	*from++ = d[3];
+// 	*from++ = d[4];
+// 	*from++ = d[5];
+// 	*from++ = d[6];
+// 	*from++ = d[7];
 
-	return from;
-}
+// 	return from;
+// }
 
 /*
  * create_jump(opcode, from, to)
  * Create a 5 byte jmp/call instruction jumping to address to, by overwriting
  * code starting at address from.
  */
-void
-create_jump(unsigned char opcode, unsigned char *from, void *to)
+uint32_t
+create_jalr(uint32_t imm)
 {
+	return ((imm & 0x00000FFF) << 20) | 0x00028367; // jalr, t1, t0, lower 12 bits of immediate
+}
+
+uint32_t
+create_auipc(uint32_t imm) {
+	return ((imm & 0xFFFFF000) << 12) | 0x00000297; // auipc, t0, upper 20 bits of immediate
+}
+
+uint64_t
+create_jump_pair(unsigned char *from, unsigned char *to) {
 	/*
 	 * The operand is the difference between the
 	 * instruction pointer pointing to the instruction
 	 * just after the call, and the to address.
 	 * Thus RIP seen by the call instruction is from + 5
 	 */
-	ptrdiff_t delta = ((unsigned char *)to) - (from + JUMP_INS_SIZE);
+	ptrdiff_t delta = to - (from + UNCOMPRESSED_INS_SIZE);
 
 	if (delta > ((ptrdiff_t)INT32_MAX) || delta < ((ptrdiff_t)INT32_MIN))
 		xabort("create_jump distance check");
 
 	int32_t delta32 = (int32_t)delta;
-	unsigned char *d = (unsigned char *)&delta32;
-
-	from[0] = opcode;
-	from[1] = d[0];
-	from[2] = d[1];
-	from[3] = d[2];
-	from[4] = d[3];
+	uint32_t auipc_ins = create_auipc(delta32);
+	uint32_t jalr_ins = create_jalr(delta32);
+	return ((uint64_t)auipc_ins << 32) | jalr_ins;
 }
 
 /*
@@ -266,12 +272,7 @@ is_copiable_before_syscall(struct intercept_disasm_result ins)
 	if (!ins.is_set)
 		return false;
 
-	return !(ins.has_ip_relative_opr ||
-	    ins.is_call ||
-	    ins.is_rel_jump ||
-	    ins.is_jump ||
-	    ins.is_ret ||
-	    ins.is_endbr ||
+	return !(ins.is_pc_rel ||
 	    ins.is_syscall);
 }
 
@@ -288,11 +289,7 @@ is_copiable_after_syscall(struct intercept_disasm_result ins)
 	if (!ins.is_set)
 		return false;
 
-	return !(ins.has_ip_relative_opr ||
-	    ins.is_call ||
-	    ins.is_rel_jump ||
-	    ins.is_jump ||
-	    ins.is_endbr ||
+	return !(ins.is_pc_rel ||
 	    ins.is_syscall);
 }
 
@@ -538,9 +535,10 @@ init_patcher(void)
 	 *
 	 * XXX check for ZMM registers, and save/restore them!
 	 */
-	extern bool has_ymm_registers(void);
+	// extern bool has_ymm_registers(void);
+	/* will deal with extension registers later (vector and what else? system I am on does not have vector) */
 
-	intercept_routine_must_save_ymm = has_ymm_registers();
+	// intercept_routine_must_save_ymm = has_ymm_registers();
 }
 
 /*
@@ -591,7 +589,7 @@ static unsigned char *
 relocate_instruction(unsigned char *dst,
 			const struct intercept_disasm_result *ins)
 {
-	if (ins->is_lea_rip) {
+	if (ins->is_pc_rel) {
 		/*
 		 * Substitue a "lea $offset(%rip), %reg" instruction
 		 * by a movabs instruction, to achieve the same effect.

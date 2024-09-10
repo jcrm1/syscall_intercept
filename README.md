@@ -291,3 +291,15 @@ INTERCEPT_HOOK_CMDLINE_FILTER=ls \
 
 With this filtering, the intercepting library is not activated in the gdb
 process itself.
+
+## riscv32 to-do:
+- [ ] Clean this list up and turn it into GitHub issues
+- [ ] Add case for stack pointer change after clone (`post_clone`) (`intercept.c`)
+- [ ] Migrate `syscall_formats.c` and `.h`
+- [ ] Iterate over nop table and merge entries to determine which can be used for combination auipc+jalr
+- [ ] Complete `intercept_template.S` and `intercept_wrapper.S`
+- [ ] Verify trampoline system
+- [ ] Understand when Capstone can produce `result.length == 0` condition in `crawl_text`
+- [ ] Rewrite markdown documentation
+- [ ] Clean up comments
+- [ ] Update tests
